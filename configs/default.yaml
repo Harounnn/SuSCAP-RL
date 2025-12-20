@@ -1,0 +1,31 @@
+seed: 42
+device: cpu
+
+training:
+  total_steps: 1_000_000
+  batch_size: 256
+  updates_per_step: 1
+  gamma: 0.99
+  tau: 0.005
+
+model:
+  hidden_sizes: [128, 128]
+  ensemble_size: 2
+  entropy_coef: 0.001
+
+constraints:
+  dual_lr: 1e-4
+  dual_update_freq: 500
+  lambda_max: 100.0
+
+curriculum:
+  phase_schedule:
+    - corners
+    - edges
+    - grid
+    - adversarial
+    - refinement
+
+evaluation:
+  eval_freq: 10_000
+  preference_grid: coarse
