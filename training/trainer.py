@@ -5,6 +5,7 @@ import os
 from training.replay_buffer import ReplayBuffer
 from training.sac_extensions import SACWithConstraints
 from training.dual import DualController
+from curriculum.scheduler import SchedulerCurriculum
 
 class Trainer:
     def __init__(self, cfg, env, device="cpu"):
@@ -56,7 +57,7 @@ class Trainer:
         self.dual_update_freq = cons_cfg.get("dual_update_freq", 500)
         self.eval_freq = eval_cfg.get("eval_freq", 5000)
 
-        self.curriculum = cfg.get("curriculum", None)
+        self.curriculum = SchedulerCurriculum()
 
         self.cost_ewma = np.zeros(n_constraints, dtype=float)
         self.ewma_alpha = 0.01
@@ -95,10 +96,8 @@ class Trainer:
         return steps
 
     def sample_curriculum(self, step):
-        # placeholder: sample random w and scenario c
-        w = np.random.dirichlet([1.0,1.0,1.0])
-        # scenario conditioning vector: here we encode one-hot for scenario (or zeros)
-        c = np.zeros(2, dtype=float)  # user should replace with real scenario encoding
+        w, c, scenario = self.curriculum.sample(step)
+        self.env.scenario = scenario
         return w, c
 
     def train(self):
