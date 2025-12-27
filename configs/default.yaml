@@ -1,9 +1,19 @@
 seed: 42
 device: cpu
 
+env:
+  obs_dim: 5          # cpu, mem, carbon, sin(t), cos(t)
+  action_dim: 1
+  n_constraints: 2    # energy, latency
+
+conditioning:
+  preference_dim: 3   # energy, CO2, latency
+  scenario_dim: 2     # scenario encoding
+  cond_dim: 5         # preference_dim + scenario_dim
+
 training:
-  total_steps: 1_000_000
-  batch_size: 256
+  total_steps: 1
+  batch_size: 8
   updates_per_step: 1
   gamma: 0.99
   tau: 0.005
@@ -12,11 +22,14 @@ model:
   hidden_sizes: [128, 128]
   ensemble_size: 2
   entropy_coef: 0.001
+  actor_lr: !!float 1e-4
+  critic_lr: !!float 3e-4
 
 constraints:
-  dual_lr: 1e-4
+  dual_lr: !!float 1e-4
   dual_update_freq: 500
   lambda_max: 100.0
+  cost_thresholds: [2.0, 1.0]   # energy, latency
 
 curriculum:
   phase_schedule:
@@ -27,5 +40,5 @@ curriculum:
     - refinement
 
 evaluation:
-  eval_freq: 10_000
+  eval_freq: 1
   preference_grid: coarse
