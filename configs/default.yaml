@@ -8,11 +8,11 @@ env:
 
 conditioning:
   preference_dim: 3   # energy, CO2, latency
-  scenario_dim: 2     # scenario encoding
-  cond_dim: 5         # preference_dim + scenario_dim
+  scenario_dim: 5
+  cond_dim: 8        # preference_dim + scenario_dim
 
 training:
-  total_steps: 1
+  total_steps: 10
   batch_size: 8
   updates_per_step: 1
   gamma: 0.99
@@ -40,5 +40,5 @@ curriculum:
     - refinement
 
 evaluation:
-  eval_freq: 1
+  eval_freq: 2
   preference_grid: coarse
