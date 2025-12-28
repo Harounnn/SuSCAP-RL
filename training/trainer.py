@@ -62,6 +62,29 @@ class Trainer:
         self.cost_ewma = np.zeros(n_constraints, dtype=float)
         self.ewma_alpha = 0.01
 
+
+        self.ckpt_dir = "checkpoints"
+        os.makedirs(self.ckpt_dir, exist_ok=True)
+
+    def save_checkpoint(self, step: int, name: str | None = None):
+        ckpt = {
+            "step": step,
+            "actor": self.agent.actor.state_dict(),
+            "reward_critics": [c.state_dict() for c in self.agent.critics],
+            "constraint_critics": [
+                [c.state_dict() for c in group]
+                for group in self.agent.constraint_critics
+            ],
+            "dual_vars": self.dual.lambdas.copy(),
+        }
+
+        fname = name or f"step_{step:06d}.pt"
+        path = os.path.join(self.ckpt_dir, fname)
+        torch.save(ckpt, path)
+        print(f"[Checkpoint] Saved to {path}")
+
+
+
     def collect_episode(self, w, c, deterministic=False):
         obs, _ = self.env.reset()
         done = False
@@ -134,7 +157,27 @@ class Trainer:
             # periodic evaluation hook placeholder
             if step % self.eval_freq == 0:
                 print(f"[TRAIN] step={step}, replay={len(self.replay)}")
+                self.save_checkpoint(step, name="latest.pt")
+
 
             step += 1
 
+        self.save_checkpoint(step, name="final.pt")
         print("Training finished")
+
+    def load_checkpoint(self, path: str):
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+
+        self.agent.actor.load_state_dict(ckpt["actor"])
+
+        for c, sd in zip(self.agent.critics, ckpt["reward_critics"]):
+            c.load_state_dict(sd)
+
+        for group, sd_group in zip(self.agent.constraint_critics, ckpt["constraint_critics"]):
+            for c, sd in zip(group, sd_group):
+                c.load_state_dict(sd)
+
+        self.dual.lambdas = ckpt["dual_vars"].copy()
+
+        print(f"[Checkpoint] Loaded from {path}")
+

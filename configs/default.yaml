@@ -12,8 +12,8 @@ conditioning:
   cond_dim: 8        # preference_dim + scenario_dim
 
 training:
-  total_steps: 10
-  batch_size: 8
+  total_steps: 2000
+  batch_size: 64
   updates_per_step: 1
   gamma: 0.99
   tau: 0.005
@@ -40,5 +40,5 @@ curriculum:
     - refinement
 
 evaluation:
-  eval_freq: 2
+  eval_freq: 250
   preference_grid: coarse
