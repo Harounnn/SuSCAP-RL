@@ -57,13 +57,15 @@ class SACWithConstraints:
         qs = []
         for qc in self.critics:
             qs.append(qc(obs, action, cond))
-        return torch.stack(qs, dim=0).mean(0), torch.stack(qs, dim=0).var(0)
+        stacked = torch.stack(qs, dim=0)
+        return stacked.mean(0), stacked.var(0)
 
     def constraint_mean(self, obs, action, cond, constraint_i):
         qs = []
         for qc in self.constraint_critics[constraint_i]:
             qs.append(qc(obs, action, cond))
-        return torch.stack(qs, dim=0).mean(0), torch.stack(qs, dim=0).var(0)
+        stacked = torch.stack(qs, dim=0)
+        return stacked.mean(0), stacked.var(0)
 
     def soft_update_targets(self):
         for k, qc in enumerate(self.critics):
@@ -75,36 +77,68 @@ class SACWithConstraints:
                     tp.data.copy_(self.tau * p.data + (1 - self.tau) * tp.data)
 
     def update(self, batch, w_batch, c_batch, lambda_vec, relabel=False, mode="linear"):
+        """
+        batch: dict with keys 's','a','r_vec','cost','s_next','done' (numpy arrays)
+        w_batch: numpy (B,3)
+        c_batch: numpy (B, scenario_dim)
+        lambda_vec: numpy (n_constraints,)
+        relabel: reserved (not exploited heavily here)
+        mode: 'linear' or 'chebyshev'
+        """
         obs = torch.tensor(batch["s"], dtype=torch.float32, device=self.device)
         actions = torch.tensor(batch["a"], dtype=torch.float32, device=self.device)
-        rvecs = torch.tensor(batch["r_vec"], dtype=torch.float32, device=self.device)  # shape B x 3
+        rvecs = torch.tensor(batch["r_vec"], dtype=torch.float32, device=self.device)  # shape B x d
         costs = torch.tensor(batch["cost"], dtype=torch.float32, device=self.device)    # B x m
         next_obs = torch.tensor(batch["s_next"], dtype=torch.float32, device=self.device)
         dones = torch.tensor(batch["done"].astype(float), dtype=torch.float32, device=self.device)
 
+        # cond is concatenation w||c
         cond = torch.tensor(np.concatenate([w_batch, c_batch], axis=1), dtype=torch.float32, device=self.device)
 
-        # scalarize
+        # --- scalarization ---
         if mode == "linear":
-            w_t = torch.tensor(w_batch, dtype=torch.float32, device=self.device)
-            r_scalar = (rvecs * w_t).sum(dim=1)
+            w_t = torch.tensor(w_batch, dtype=torch.float32, device=self.device)  # B x d
+            r_scalar = (rvecs * w_t).sum(dim=1)  # B
+        elif mode == "chebyshev":
+            # weighted Chebyshev: r_scalar = - max_i ( (z_i - r_i) / (w_i + eps) )
+            # where z is the ideal point (we use batch-wise max as approximation)
+            eps = 1e-8
+            w_t = torch.tensor(w_batch, dtype=torch.float32, device=self.device)  # B x d
+            # compute per-dimension ideal point z from the batch rvecs
+            # shape d
+            z = rvecs.max(dim=0).values.detach()  # ideal point (per-objective)
+            # compute distances (B x d)
+            # Broadcasting: (B,d) -> (z - rvecs) / w_t
+            denom = w_t + eps
+            distances = (z.unsqueeze(0) - rvecs) / denom
+            # Chebyshev aggregate (take max across objectives)
+            t_vals = torch.max(distances, dim=1).values  # B
+            # we want to maximize closeness to ideal -> define scalar = -t_vals
+            r_scalar = -t_vals
         else:
-            r_scalar = torch.tensor(batch["r_scalar"], dtype=torch.float32, device=self.device)
+            # fallback if unknown mode, attempt to use provided precomputed scalar
+            if "r_scalar" in batch:
+                r_scalar = torch.tensor(batch["r_scalar"], dtype=torch.float32, device=self.device)
+            else:
+                # default to linear
+                w_t = torch.tensor(w_batch, dtype=torch.float32, device=self.device)
+                r_scalar = (rvecs * w_t).sum(dim=1)
 
         # critic targets
         with torch.no_grad():
-            # next actions from actor
             a_next, _, _ = self.actor.sample(next_obs, cond)
             q_next_mean, _ = self.critic_mean(next_obs, a_next, cond)
             y = r_scalar + self.gamma * (1.0 - dones) * q_next_mean
 
-        # update each reward critic
+        # update reward critics
+        critic_loss = 0.0
         for k, (qc, opt) in enumerate(zip(self.critics, self.critic_opts)):
             opt.zero_grad()
             q_val = qc(obs, actions, cond)
-            loss = F.mse_loss(q_val, y)
-            loss.backward()
+            loss_q = F.mse_loss(q_val, y)
+            loss_q.backward()
             opt.step()
+            critic_loss = critic_loss + loss_q.item()
 
         # update constraint critics
         for i in range(self.n_constraints):
@@ -121,12 +155,11 @@ class SACWithConstraints:
             for k, (qc, opt) in enumerate(zip(self.constraint_critics[i], self.constraint_opts[i])):
                 opt.zero_grad()
                 q_val = qc(obs, actions, cond)
-                loss = F.mse_loss(q_val, y_cost)
-                loss.backward()
+                loss_cost = F.mse_loss(q_val, y_cost)
+                loss_cost.backward()
                 opt.step()
 
         # actor update
-        # sample actions for current obs
         a_pi, logp, _ = self.actor.sample(obs, cond)
         q_r_mean, _ = self.critic_mean(obs, a_pi, cond)
 
@@ -150,5 +183,5 @@ class SACWithConstraints:
 
         return {
             "actor_loss": actor_loss.item(),
-            "critic_loss": loss.item()
+            "critic_loss": critic_loss if isinstance(critic_loss, float) else critic_loss.item()
         }

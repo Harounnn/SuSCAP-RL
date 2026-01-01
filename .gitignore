@@ -210,3 +210,4 @@ carbon_intensity_2024.csv
 instance_usage-000000000000.json
 *.csv
 *.pt
+figures/

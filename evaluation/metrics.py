@@ -41,28 +41,30 @@ def pareto_front(points: np.ndarray) -> np.ndarray:
     return np.array(nondom)
 
 def hypervolume_mc(points: np.ndarray, ref: np.ndarray, n_samples: int = 100000, seed: Optional[int]=0) -> float:
-    """
-    Monte-Carlo approximate hypervolume for maximization objectives.
-    points: (N, d) array of objective vectors (higher better).
-    ref: reference point (d,) with values strictly less than best objectives.
-    Returns approximated hypervolume (scalar).
-    NOTE: MC is approximate and scales with n_samples. Use larger n_samples for precision.
-    """
     rng = np.random.default_rng(seed)
     points = np.array(points)
     if points.size == 0:
         return 0.0
     d = points.shape[1]
-    mins = np.minimum(points.min(axis=0), ref)
-    low = mins
-    high = ref
+
+    comp_min = points.min(axis=0)
+    safe_ref = np.minimum(ref, comp_min) - 1e-6
+
+    maxima = points.max(axis=0)
+    low = safe_ref
+    high = maxima
+
+    if np.any(high <= low):
+        return 0.0
+
     samples = rng.random((n_samples, d)) * (high - low) + low
     dominated = np.zeros(n_samples, dtype=bool)
     for p in points:
-        dominated |= np.all(samples <= p, axis=1)  
+        dominated |= np.all(samples <= p, axis=1)
     fraction = dominated.mean()
-    vol_box = np.prod(ref - low)
+    vol_box = np.prod(high - low)
     return fraction * vol_box
+
 
 def grid_regret_matrix(return_grid: np.ndarray, w_grid: np.ndarray, ref_map: Optional[np.ndarray] = None) -> np.ndarray:
     """

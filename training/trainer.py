@@ -6,6 +6,7 @@ from training.replay_buffer import ReplayBuffer
 from training.sac_extensions import SACWithConstraints
 from training.dual import DualController
 from curriculum.scheduler import SchedulerCurriculum
+from curriculum.preference import PreferenceCurriculum
 
 class Trainer:
     def __init__(self, cfg, env, device="cpu"):
@@ -57,7 +58,12 @@ class Trainer:
         self.dual_update_freq = cons_cfg.get("dual_update_freq", 500)
         self.eval_freq = eval_cfg.get("eval_freq", 5000)
 
+        # scalarization control: default linear; can switch to 'chebyshev' at step chebyshev_start
+        self.scalar_mode = train_cfg.get("scalar_mode", "linear")
+        self.chebyshev_start = train_cfg.get("chebyshev_start", 6000)
+
         self.curriculum = SchedulerCurriculum()
+        self.preference = PreferenceCurriculum()
 
         self.cost_ewma = np.zeros(n_constraints, dtype=float)
         self.ewma_alpha = 0.01
@@ -83,16 +89,12 @@ class Trainer:
         torch.save(ckpt, path)
         print(f"[Checkpoint] Saved to {path}")
 
-
-
     def collect_episode(self, w, c, deterministic=False):
         obs, _ = self.env.reset()
         done = False
         steps = 0
         while True:
-            # build cond vector from w and c (here we assume c is numeric vector)
             cond = np.concatenate([w, c], axis=0).astype(np.float32)
-            # action: sample from actor
             obs_t = torch.tensor(obs[None,:], dtype=torch.float32)
             cond_t = torch.tensor(cond[None,:], dtype=torch.float32)
             with torch.no_grad():
@@ -119,8 +121,18 @@ class Trainer:
         return steps
 
     def sample_curriculum(self, step):
-        w, c, scenario = self.curriculum.sample(step)
+        w = self.preference.sample(step)
+
+        # sample scenario + encoding
+        c, scenario = self.curriculum.sample(step)
+
+        # set env scenario
         self.env.scenario = scenario
+
+        # logging (now meaningful)
+        if step % max(1, int(self.total_steps / 20)) == 0:
+            print(f"[CURRICULUM] step={step} w={w.tolist()} scenario={scenario}")
+
         return w, c
 
     def train(self):
@@ -133,6 +145,11 @@ class Trainer:
             # collect 1 episode
             self.collect_episode(w, c)
 
+            # choose scalarization mode for this step
+            current_mode = self.scalar_mode
+            if self.chebyshev_start is not None and step >= self.chebyshev_start:
+                current_mode = "chebyshev"
+
             # perform updates
             for _ in range(self.updates_per_step):
                 if len(self.replay) < self.batch_size:
@@ -142,9 +159,8 @@ class Trainer:
                 w_batch = np.stack(batch["w"])
                 c_batch = np.stack(batch["c"])
                 # convert batch values to the format expected by update()
-                # here we pass batch arrays and vectors
                 lambda_vec = self.dual.lambdas.copy()
-                info = self.agent.update(batch, w_batch, c_batch, lambda_vec, relabel=True, mode="linear")
+                info = self.agent.update(batch, w_batch, c_batch, lambda_vec, relabel=True, mode=current_mode)
 
                 # update EWMA costs for dual updates using sampled batch average
                 batch_costs = np.stack(batch["cost"]).mean(axis=0)
@@ -152,13 +168,13 @@ class Trainer:
 
             # dual update occasionally
             if step % self.dual_update_freq == 0 and step > 0:
-                self.dual.step(self.cost_ewma, targets=np.array([self.cfg.get("cost_threshold",1.0)]*self.dual.lambdas.size))
+                targets = np.array(self.cfg["constraints"]["cost_thresholds"])
+                self.dual.step(self.cost_ewma, targets=targets)
 
-            # periodic evaluation hook placeholder
+            # periodic evaluation hook / checkpoint
             if step % self.eval_freq == 0:
-                print(f"[TRAIN] step={step}, replay={len(self.replay)}")
+                print(f"[TRAIN] step={step}, replay={len(self.replay)} scalar_mode={current_mode}")
                 self.save_checkpoint(step, name="latest.pt")
-
 
             step += 1
 
@@ -180,4 +196,3 @@ class Trainer:
         self.dual.lambdas = ckpt["dual_vars"].copy()
 
         print(f"[Checkpoint] Loaded from {path}")
-

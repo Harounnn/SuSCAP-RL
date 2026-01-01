@@ -1,0 +1,47 @@
+# configs/debug.yaml
+seed: 42
+device: cpu
+
+env:
+  obs_dim: 5
+  action_dim: 1
+  n_constraints: 2
+
+conditioning:
+  preference_dim: 3
+  scenario_dim: 5
+  cond_dim: 8
+
+training:
+  total_steps: 2500         # episodes
+  batch_size: 64
+  updates_per_step: 1
+  gamma: 0.99
+  tau: 0.01
+
+model:
+  hidden_sizes: [128, 128]
+  ensemble_size: 2
+  entropy_coef: 0.002
+  actor_lr: !!float 1e-4
+  critic_lr: !!float 3e-4
+
+constraints:
+  dual_lr: !!float 5e-5
+  dual_update_freq: 200
+  lambda_max: 20.0
+  cost_thresholds: [2.0, 1.0]
+
+curriculum:
+  phase_schedule:
+    - corners
+    - edges
+    - grid
+
+evaluation:
+  eval_freq: 500
+  eval_episode_length: 1140
+  eval_episodes: 3
+  eval_n_preferences: 21
+  n_scenarios: 5
+  hv_samples: 1000
