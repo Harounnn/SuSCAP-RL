@@ -1,0 +1,21 @@
+{
+  "test_name": "SuSCAP-RL 6-Phase Smoke Test",
+  "status": "PASSED",
+  "phases_tested": [
+    "corners",
+    "edges",
+    "grid",
+    "adversarial",
+    "refinement",
+    "polishing"
+  ],
+  "total_elapsed_sec": 83.13,
+  "baselines_tested": [
+    "random",
+    "single_objective_sac_path",
+    "heuristic_proxy"
+  ],
+  "config": "configs/test_smoke.yaml",
+  "env_episode_length": 10,
+  "steps_per_phase": 2
+}

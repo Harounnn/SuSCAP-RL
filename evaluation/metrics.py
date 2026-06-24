@@ -96,17 +96,57 @@ def grid_regret_matrix(return_grid: np.ndarray, w_grid: np.ndarray, ref_map: Opt
     regret = np.maximum(regret, 0.0)
     return regret
 
-def constraint_stats(cost_grid: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def constraint_stats(cost_grid: np.ndarray, thresholds: Optional[np.ndarray] = None) -> Tuple[float, float]:
     """
-    cost_grid: shape (n_w, n_c, m) - aggregated cost per eval (sum or mean)
+    Compute constraint violation statistics.
+    
+    Args:
+        cost_grid: shape (n_w, n_c, m) - costs per (preference, scenario, constraint)
+        thresholds: optional (m,) threshold vector for constraint evaluation
+    
     Returns:
-      violation_rate: (m,) fraction of (w,c) where cost>0
-      mean_violation: (m,) mean of positive cost across evaluated cells
+        violation_rate: fraction of (w,c,m) cells exceeding threshold or >0
+        mean_violation: mean positive cost across violated cells
     """
-    pos = cost_grid > 0.0
-    violation_rate = pos.any(axis=2).mean(axis=(0,1)) if cost_grid.ndim == 3 else (pos.mean(axis=0))
-    mean_violation = np.mean(np.where(cost_grid>0, cost_grid, 0.0), axis=(0,1))
-    return violation_rate, mean_violation
+    if thresholds is not None:
+        # Threshold-based violations
+        violations = (cost_grid > thresholds[np.newaxis, np.newaxis, :]).astype(float)
+        violation_rate = violations.mean()
+        mean_violation = np.mean(np.where(violations > 0, cost_grid, 0.0))
+    else:
+        # Simple positivity check (legacy)
+        pos = cost_grid > 0.0
+        violation_rate = pos.mean()
+        mean_violation = np.mean(np.where(pos, cost_grid, 0.0))
+    
+    return float(violation_rate), float(mean_violation)
+
+def per_constraint_violation_rates(cost_grid: np.ndarray, thresholds: Optional[np.ndarray] = None) -> np.ndarray:
+    """
+    Compute per-constraint violation rates.
+    
+    Args:
+        cost_grid: shape (n_w, n_c, m)
+        thresholds: optional (m,) thresholds
+    
+    Returns:
+        violation_rates: (m,) array of violation rates per constraint
+    """
+    n_constraints = cost_grid.shape[2]
+    rates = []
+    
+    for c_idx in range(n_constraints):
+        constraint_costs = cost_grid[:, :, c_idx]
+        if thresholds is not None:
+            threshold = thresholds[c_idx]
+            violations = (constraint_costs > threshold).astype(float)
+        else:
+            violations = (constraint_costs > 0.0).astype(float)
+        
+        rate = violations.mean()
+        rates.append(rate)
+    
+    return np.array(rates)
 
 def coverage_fraction(points: np.ndarray, grid_shape: Tuple[int,int]) -> float:
     """

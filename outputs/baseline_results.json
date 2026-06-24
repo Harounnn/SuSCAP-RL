@@ -1,0 +1,35 @@
+[
+  {
+    "hypervolume": 0.0016343603984703833,
+    "coverage_fraction": 0.2222222222222222,
+    "pareto_front_size": 11,
+    "constraint_violation_rate": 0.0,
+    "mean_constraint_violation": 0.0,
+    "total_episodes": 135,
+    "method": "random_policy",
+    "description": "Actions sampled uniformly from env.action_space",
+    "wall_time_sec": 297.84469866752625
+  },
+  {
+    "hypervolume": 0.0023273168531681206,
+    "coverage_fraction": 0.15555555555555556,
+    "pareto_front_size": 8,
+    "constraint_violation_rate": 0.0,
+    "mean_constraint_violation": 0.0,
+    "total_episodes": 135,
+    "method": "single_objective_sac",
+    "description": "SAC trained for 10k steps with fixed one-hot w=[0.0, 0.0, 1.0], no curriculum",
+    "wall_time_sec": 1176.5623347759247
+  },
+  {
+    "method": "heuristic_proxy_nsga2",
+    "description": "Random search over 100 weight configs + non-dominated sorting",
+    "hypervolume": 0.0010784151550250795,
+    "coverage_fraction": 0.0,
+    "pareto_front_size": 8,
+    "constraint_violation_rate": 0.0,
+    "mean_constraint_violation": 0.0,
+    "total_episodes": 100,
+    "wall_time_sec": 242.7655029296875
+  }
+]

@@ -4,6 +4,7 @@ import copy
 import numpy as np
 
 from torch.optim import Adam
+from training.dual import DualController
 
 class SACWithConstraints:
     def __init__(self, cfg, env, device="cpu"):
@@ -172,8 +173,10 @@ class SACWithConstraints:
 
         lambda_t = torch.tensor(lambda_vec, dtype=torch.float32, device=self.device)
         penalty = (q_c_stack * lambda_t).sum(dim=1)
+        # Scale penalty to match reward signal magnitude (typically -10 to -1000)
+        penalty_scaled = penalty * 10.0
 
-        actor_loss = - (q_r_mean - penalty).mean() + self.alpha * (-logp).mean()
+        actor_loss = - (q_r_mean - penalty_scaled).mean() + self.alpha * (-logp).mean()
         self.actor_opt.zero_grad()
         actor_loss.backward()
         self.actor_opt.step()

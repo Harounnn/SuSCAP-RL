@@ -90,13 +90,15 @@ def plot_pareto_3d(points: np.ndarray, save_path: str = None):
 
 def plot_ensemble_variance(var_grid: np.ndarray, scenario_names: list, save_path: str = None):
     """
-    var_grid: (n_w, n_c)
+    var_grid: (n_w, n_c) — policy entropy (mean entropy per episode per cell)
+    Visualizes policy stochasticity: higher = more uncertain/exploratory policy
     """
     n_w, n_c = var_grid.shape
     fig, axes = plt.subplots(1, n_c, figsize=(3*n_c, 4), squeeze=False)
     for j in range(n_c):
         sns.heatmap(var_grid[:, j].reshape(-1,1), ax=axes[0,j], cmap="magma", cbar=True)
         axes[0,j].set_title(scenario_names[j])
+        axes[0,j].set_ylabel("Preference index")
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path)

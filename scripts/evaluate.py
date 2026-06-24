@@ -1,4 +1,3 @@
-# scripts/evaluate.py
 import os
 import yaml
 import argparse
@@ -11,134 +10,197 @@ from evaluation.evaluator import Evaluator
 import evaluation.metrics as metrics
 import evaluation.plots as plots
 
-# ---- CLI ----
+# CLI
 parser = argparse.ArgumentParser()
 parser.add_argument("--config", default="configs/default.yaml")
 parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
-parser.add_argument("--mode", choices=["fast", "full"], default="fast",
-                    help="fast: quick smoke-test; full: denser eval for figures")
+parser.add_argument("--mode", choices=["fast", "full"], default="fast")
 parser.add_argument("--device", default="cpu")
+parser.add_argument("--stochastic", action="store_true", help="use stochastic policy sampling during eval")
 args = parser.parse_args()
 
 cfg = yaml.safe_load(open(args.config))
 
-# ---- build env (small episode for fast mode) ----
+# mode settings
+e = cfg.get("evaluation", {})
 if args.mode == "fast":
-    episode_length = 10
-    episodes_per_cell = 1
-    n_pref = 5
-    n_scen = 2
-    hv_samples = 1000
+    episode_length = e.get("eval_episode_length", 20)
+    episodes_per_cell = e.get("eval_episodes", 1)
+    n_pref = e.get("eval_n_preferences", 7)
+    use_all_scenarios = False
+    hv_samples = e.get("hv_samples", 1000)
 else:
-    # full (paper) defaults — override in config if needed
-    episode_length = cfg.get("eval_episode_length", 720)
-    episodes_per_cell = cfg.get("eval_episodes", 7)
-    n_pref = cfg.get("eval_n_preferences", 9)
-    n_scen = None  # all scenarios
-    hv_samples = cfg.get("hv_samples", 20000)
+    episode_length = e.get("eval_episode_length", 720)
+    episodes_per_cell = e.get("eval_episodes", 28)
+    n_pref = e.get("eval_n_preferences", 15)
+    use_all_scenarios = True
+    hv_samples = e.get("hv_samples", 20000)
 
-env = SchedulerEnv(data_path="data/processed/merged_timeseries.csv",
-                   episode_length=episode_length)
+device = args.device
 
-# ---- load agent ----
-trainer = Trainer(cfg, env, device=args.device)
-if os.path.exists(args.checkpoint):
-    # Use weights_only=False to allow numpy arrays in checkpoint (dual vars)
-    ckpt = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
-    trainer.load_checkpoint(args.checkpoint)
-    print("[EVAL] Loaded checkpoint:", args.checkpoint)
-else:
-    print("[EVAL] Checkpoint not found, using untrained agent.")
-
+# env + trainer + agent
+env = SchedulerEnv(data_path="data/processed/merged_timeseries.csv", episode_length=episode_length)
+trainer = Trainer(cfg, env, device=device)
+if not os.path.exists(args.checkpoint):
+    raise SystemExit(f"Checkpoint not found: {args.checkpoint}")
+trainer.load_checkpoint(args.checkpoint)
+print("[EVAL] Loaded checkpoint:", args.checkpoint)
 agent = trainer.agent
+agent.actor.eval()
 
-# ---- build grids ----
-from curriculum.preference import PreferenceCurriculum
+# build preference simplex grid (barycentric)
+def build_simplex_grid(K):
+    grid = []
+    for i in range(K+1):
+        for j in range(K+1 - i):
+            k = K - i - j
+            w = np.array([i, j, k], dtype=float) / float(K)
+            if w.sum() > 0:
+                grid.append(w)
+    return np.array(grid, dtype=np.float32)
+
+def choose_K_for_n(n_pref):
+    K = 1
+    while (K + 1) * (K + 2) // 2 < n_pref:
+        K += 1
+    return K
+
+K = choose_K_for_n(n_pref)
+W_grid = build_simplex_grid(K)
+if len(W_grid) > n_pref:
+    idx = np.linspace(0, len(W_grid)-1, n_pref).astype(int)
+    W_grid = W_grid[idx]
+
+# scenarios
 from curriculum.scenario import ScenarioCurriculum
-
-pref = PreferenceCurriculum()
 scen = ScenarioCurriculum()
-
-# sample preferences
-W_grid = np.stack([pref.sample(i) for i in range(n_pref)])
-
-# scenario bank (limit if fast)
 all_scenarios = scen.scenarios
-if args.mode == "fast":
-    chosen_scen = all_scenarios[:n_scen]
+if use_all_scenarios:
+    chosen_scenarios = all_scenarios
 else:
-    chosen_scen = all_scenarios
-C_bank = [(s, scen.encode(s)) for s in chosen_scen]
+    chosen_scenarios = all_scenarios[:min(2, len(all_scenarios))]
+C_bank = [(s, scen.encode(s)) for s in chosen_scenarios]
 
-print(f"[EVAL] grid sizes: preferences={len(W_grid)}, scenarios={len(C_bank)}, episodes={episodes_per_cell}")
+print(f"[EVAL] preferences={len(W_grid)}, scenarios={len(C_bank)}, episodes={episodes_per_cell}, episode_length={episode_length}, stochastic={args.stochastic}")
 
-# ---- evaluate ----
-evaluator = Evaluator(env, agent, device=args.device)
-return_grid, cost_grid, var_grid = evaluator.evaluate_grid(W_grid, C_bank, episodes=episodes_per_cell)
+# evaluator
+evaluator = Evaluator(env, agent, device=device)
+return_grid, cost_grid, var_grid, per_episode_points, per_episode_meta = evaluator.evaluate_grid(
+    W_grid, C_bank, episodes=episodes_per_cell, stochastic=args.stochastic, show_progress=True
+)
 
-# ---- metrics ----
-# convert to maximization-space (higher better)
-flat_points = metrics.to_maximization_space(return_grid.reshape(-1, return_grid.shape[-1]))
+# convert per-episode returns to maximization space
+points = metrics.to_maximization_space(per_episode_points)  # shape (N, d)
 
-# compute pareto front (maximization)
-pf = metrics.pareto_front(flat_points)
+# normalization: scale each objective by 95th percentile to avoid domination by magnitude
+if points.shape[0] > 0:
+    scales = np.maximum(np.percentile(points, 95, axis=0), 1e-9)
+    points_norm = points / scales
+else:
+    points_norm = points
 
-# choose reference point for HV: must be strictly WORSE than all points (smaller in each dimension)
-# safe default: ref = (min(points) - margin)
-margin = 1e-6
-ref = flat_points.min(axis=0) - margin
+# Pareto on per-episode points (normalized)
+pf = metrics.pareto_front(points_norm) if points_norm.shape[0] > 0 else np.zeros((0, points.shape[1]))
 
-hv = metrics.hypervolume_mc(flat_points, ref=ref, n_samples=hv_samples)
-print("[EVAL] Hypervolume (MC approx):", hv)
+# hypervolume: choose safe reference = min(points_norm) - eps
+if points_norm.shape[0] > 0:
+    ref = points_norm.min(axis=0) - 1e-6
+    hv = metrics.hypervolume_mc(points_norm, ref=ref, n_samples=hv_samples)
+else:
+    hv = 0.0
 
-# compute regret matrix
+print("[EVAL] Hypervolume (MC approx, normalized):", hv)
+
+# coverage fraction: whether each (w,c) cell had any non-dominated episode
+# map nondominated per-episode back to grid cells
+N = points_norm.shape[0]
+nd_mask_flat = np.zeros(N, dtype=bool)
+for i in range(N):
+    nd_mask_flat[i] = not metrics.is_dominated(points_norm[i], np.delete(points_norm, i, axis=0)) if N > 1 else True
+
+n_w = W_grid.shape[0]
+n_c = len(C_bank)
+grid_mask = np.zeros((n_w, n_c), dtype=bool)
+for idx, (iw, ic, ep) in enumerate(per_episode_meta):
+    if nd_mask_flat[idx]:
+        grid_mask[iw, ic] = True
+
+coverage_frac = grid_mask.mean()
+print("[EVAL] coverage fraction:", coverage_frac)
+
+# aggregated return_grid is already in env sign (negative costs)
+# compute regret heatmap using return_grid and W_grid
 regret = metrics.grid_regret_matrix(return_grid, W_grid)
 
-# constraint stats
-violation_rate, mean_violation = metrics.constraint_stats(cost_grid)
-print("[EVAL] constraint violation rate:", violation_rate, "mean violation:", mean_violation)
+# ========== CONSTRAINT SATISFACTION ANALYSIS ==========
+print("\n" + "="*70)
+print("CONSTRAINT ANALYSIS")
+print("="*70)
 
-# coverage
-coverage = metrics.coverage_fraction(flat_points, grid_shape=(len(W_grid), len(C_bank)))
-print("[EVAL] coverage fraction:", coverage)
+cost_thresholds = np.array(cfg["constraints"]["cost_thresholds"])
+constraint_names = ["Energy (kWh)", "Latency (sec)"]
 
-# save metrics
+# Per-constraint violation rates
+for c_idx, (c_name, threshold) in enumerate(zip(constraint_names, cost_thresholds)):
+    violations = (cost_grid[:, :, c_idx] > threshold).astype(float)
+    violation_rate = violations.mean()
+    mean_cost = cost_grid[:, :, c_idx].mean()
+    max_cost = cost_grid[:, :, c_idx].max()
+    min_cost = cost_grid[:, :, c_idx].min()
+    
+    print(f"\n{c_name}:")
+    print(f"  Threshold: {threshold:.3f}")
+    print(f"  Violation Rate: {100*violation_rate:.1f}%")
+    print(f"  Mean Cost: {mean_cost:.3f} (ratio to threshold: {mean_cost/threshold:.3f})")
+    print(f"  Min Cost: {min_cost:.3f}")
+    print(f"  Max Cost: {max_cost:.3f}")
+
+# Overall constraint satisfaction (both constraints satisfied)
+overall_satisfaction = ((cost_grid[:, :, 0] <= cost_thresholds[0]) & 
+                        (cost_grid[:, :, 1] <= cost_thresholds[1])).astype(float).mean()
+print(f"\nOverall Constraint Satisfaction (both): {100*overall_satisfaction:.1f}%")
+
+# Per-scenario constraint stats
+print("\nPer-Scenario Analysis:")
+scenario_names = [c[0] for c in C_bank]
+for ic, scenario_name in enumerate(scenario_names):
+    scenario_costs = cost_grid[:, ic, :]
+    scenario_satisfaction = ((scenario_costs[:, 0] <= cost_thresholds[0]) & 
+                             (scenario_costs[:, 1] <= cost_thresholds[1])).astype(float).mean()
+    print(f"  {scenario_name}: {100*scenario_satisfaction:.1f}% satisfaction")
+
+# Constraint violation stats (original metrics.constraint_stats if available)
+try:
+    violation_rate, mean_violation = metrics.constraint_stats(cost_grid)
+    print(f"\n[Legacy Metric] constraint violation rate: {violation_rate:.3f}, mean violation: {mean_violation:.3f}")
+except Exception:
+    pass
+
+# Summary report
+print("\n" + "="*70)
+print("EVALUATION SUMMARY")
+print("="*70)
+print(f"Hypervolume: {hv:.4f}")
+print(f"Coverage Fraction: {coverage_frac:.3f}")
+print(f"Constraint Satisfaction: {100*overall_satisfaction:.1f}%")
+print(f"Pareto Front Size: {len(pf)}")
+print(f"Total Episodes Evaluated: {N}")
+
+# Save raw artifacts
 os.makedirs("figures", exist_ok=True)
+np.save("figures/per_episode_points.npy", points_norm)
 np.save("figures/return_grid.npy", return_grid)
 np.save("figures/cost_grid.npy", cost_grid)
 np.save("figures/var_grid.npy", var_grid)
 np.save("figures/w_grid.npy", W_grid)
 
-# ---- plots (use all functions from plots.py) ----
-scenario_names = [c[0] for c in C_bank]
-
-# Regret heatmap
+# Plots
 plots.plot_regret_heatmap(regret, W_grid, scenario_names, save_path="figures/regret_heatmap.png")
-
-# Ensemble variance
 plots.plot_ensemble_variance(var_grid, scenario_names, save_path="figures/var_heatmap.png")
-
-# Pareto 3D (plot pareto front)
 if pf.size > 0:
+    # pf is in normalized space; project back approx to original scale for plotting (optional)
     plots.plot_pareto_3d(pf, save_path="figures/pareto_3d.png")
-else:
-    print("[EVAL] no pareto points to plot")
+plots.plot_coverage_map(grid_mask.flatten(), list(range(n_w)), scenario_names, save_path="figures/coverage_map.png")
 
-# Coverage map: boolean non-dominated mask per (w,c)
-# compute nondominated mask across flattened points
-nd_mask = np.zeros(flat_points.shape[0], dtype=bool)
-for i, p in enumerate(flat_points):
-    nd_mask[i] = not metrics.is_dominated(p, np.delete(flat_points, i, axis=0))
-plots.plot_coverage_map(nd_mask, w_labels=list(range(len(W_grid))), scenario_names=scenario_names, save_path="figures/coverage_map.png")
+print("\n[EVAL] Done. Figures saved in ./figures")
 
-# (Optional) if you have training logs: plot learning curves & constraints evolution
-# try to load logs if available
-logs_path = "logs/training_metrics.npz"
-if os.path.exists(logs_path):
-    logs = dict(np.load(logs_path))
-    if "hv_list" in logs:
-        plots.plot_learning_curves({"hypervolume": logs["hv_list"]}, save_path="figures/hv_curve.png")
-    if "violation_rates" in logs:
-        plots.plot_constraint_evolution(logs["violation_rates"], logs["avg_costs"], labels=["energy", "latency"], save_path="figures/constraints_evolution.png")
-
-print("[EVAL] Done. Figures saved in ./figures")

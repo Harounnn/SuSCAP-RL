@@ -1,35 +1,39 @@
 seed: 42
-device: cpu
+device: cuda
 
 env:
-  obs_dim: 5          # cpu, mem, carbon, sin(t), cos(t)
+  obs_dim: 5
   action_dim: 1
-  n_constraints: 2    # energy, latency
+  n_constraints: 2
 
 conditioning:
-  preference_dim: 3   # energy, CO2, latency
+  preference_dim: 3
   scenario_dim: 5
-  cond_dim: 8        # preference_dim + scenario_dim
+  cond_dim: 8
 
 training:
-  total_steps: 12000
-  batch_size: 128
-  updates_per_step: 1
+  total_steps: 60000
+  batch_size: 256
+  updates_per_step: 2
+  episode_length: 180
   gamma: 0.99
   tau: 0.005
+  scalar_mode: "linear"
+  chebyshev_start: 15000
 
 model:
   hidden_sizes: [128, 128]
   ensemble_size: 2
-  entropy_coef: 0.001
-  actor_lr: !!float 1e-4
-  critic_lr: !!float 3e-4
+  entropy_coef: 0.05
+  actor_lr: 0.0001
+  critic_lr: 0.0003
 
 constraints:
-  dual_lr: !!float 1e-4
-  dual_update_freq: 3000
-  lambda_max: 100.0
-  cost_thresholds: [2.0, 1.0]   # energy, latency
+  dual_lr: 0.001
+  dual_update_freq: 250
+  lambda_max: 50.0
+  lambda_init: [0.01, 0.01]
+  cost_thresholds: [0.01, 4.7]
 
 curriculum:
   phase_schedule:
@@ -38,14 +42,19 @@ curriculum:
     - grid
     - adversarial
     - refinement
+    - polishing
   phase_steps:
-    corners: 5000
-    edges: 10000
-    grid: 15000
-    adversarial: 5000
-    refinement: 5000
+    corners: 7500
+    edges: 12000
+    grid: 18000
+    adversarial: 7500
+    refinement: 9000
+    polishing: 6000
 
 evaluation:
-  eval_freq: 1500
-  eval_episode_length: 1440
+  eval_freq: 50000
+  eval_episode_length: 180
+  eval_episodes: 2
+  eval_n_preferences: 3
   preference_grid: coarse
+  hv_samples: 500

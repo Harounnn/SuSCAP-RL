@@ -1,0 +1,59 @@
+seed: 42
+device: cpu
+
+env:
+  obs_dim: 5          # cpu, mem, carbon, sin(t), cos(t)
+  action_dim: 1
+  n_constraints: 2    # energy, latency
+
+conditioning:
+  preference_dim: 3   # energy, CO2, latency
+  scenario_dim: 5
+  cond_dim: 8         # preference_dim + scenario_dim
+
+training:
+  total_steps: 120        # Minimal step count for rapid execution check
+  batch_size: 16          # Very small batch size to prevent CPU thread congestion
+  updates_per_step: 1     # Single gradient step per environment interaction
+  gamma: 0.99
+  tau: 0.005
+  scalar_mode: "linear"
+  chebyshev_start: 30     # Early transition for testing logic paths
+
+model:
+  hidden_sizes: [128, 128]
+  ensemble_size: 2
+  entropy_coef: 0.05
+  actor_lr: !!float 1e-4
+  critic_lr: !!float 3e-4
+
+constraints:
+  dual_lr: !!float 1e-3
+  dual_update_freq: 250
+  lambda_max: 50.0
+  lambda_init: [0.01, 0.01]
+  cost_thresholds: [0.01, 4.7]
+
+curriculum:
+  phase_schedule:
+    - corners
+    - edges
+    - grid
+    - adversarial
+    - refinement
+    - polishing
+  phase_steps:
+    corners: 20
+    edges: 20
+    grid: 20
+    adversarial: 20
+    refinement: 20
+    polishing: 20
+
+evaluation:
+  eval_freq: 20           # Trigger evaluations frequently to check logging logic
+  eval_episode_length: 10 # Extremely short evaluation episodes
+  eval_episodes: 2
+  eval_n_preferences: 3
+  preference_grid: coarse
+  hv_samples: 1000

@@ -75,7 +75,12 @@ class SchedulerEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        action = float(np.clip(action[0], 0.0, 1.0))
+        # Robustly handle both scalar and sequence action inputs
+        if isinstance(action, (np.ndarray, list, tuple)):
+            act_val = action[0] if len(action) > 0 else float(action)
+        else:
+            act_val = action
+        action = float(np.clip(act_val, 0.0, 1.0))
 
         row = self.df.iloc[self._start_idx + self._step_idx]
 
