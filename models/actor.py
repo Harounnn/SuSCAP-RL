@@ -20,6 +20,9 @@ class Actor(nn.Module):
         self.logstd = nn.Linear(hidden_sizes[-1], action_dim)
 
     def forward(self, obs, cond):
+        device = next(self.parameters()).device
+        obs = obs.to(device) if isinstance(obs, torch.Tensor) else torch.tensor(obs, dtype=torch.float32, device=device)
+        cond = cond.to(device) if isinstance(cond, torch.Tensor) else torch.tensor(cond, dtype=torch.float32, device=device)
         h = self.net(obs)
         h = self.film(h, cond)
         mu = self.mu(h)
@@ -28,6 +31,9 @@ class Actor(nn.Module):
         return mu, std
 
     def sample(self, obs, cond):
+        device = next(self.parameters()).device
+        obs = obs.to(device) if isinstance(obs, torch.Tensor) else torch.tensor(obs, dtype=torch.float32, device=device)
+        cond = cond.to(device) if isinstance(cond, torch.Tensor) else torch.tensor(cond, dtype=torch.float32, device=device)
         mu, std = self.forward(obs, cond)
         dist = torch.distributions.Normal(mu, std)
         x = dist.rsample()

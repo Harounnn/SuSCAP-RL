@@ -111,8 +111,8 @@ class Trainer:
         steps = 0
         while True:
             cond = np.concatenate([w, c], axis=0).astype(np.float32)
-            obs_t = torch.tensor(obs[None,:], dtype=torch.float32)
-            cond_t = torch.tensor(cond[None,:], dtype=torch.float32)
+            obs_t = torch.tensor(obs[None,:], dtype=torch.float32, device=self.device)
+            cond_t = torch.tensor(cond[None,:], dtype=torch.float32, device=self.device)
             with torch.no_grad():
                 a, _, _ = self.agent.actor.sample(obs_t, cond_t)
             action = a.cpu().numpy()[0]

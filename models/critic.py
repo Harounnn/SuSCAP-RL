@@ -13,6 +13,10 @@ class QNetwork(nn.Module):
         self.out = nn.Linear(hidden_sizes[1], 1)
 
     def forward(self, obs, action, cond):
+        device = next(self.parameters()).device
+        obs = obs.to(device) if isinstance(obs, torch.Tensor) else torch.tensor(obs, dtype=torch.float32, device=device)
+        action = action.to(device) if isinstance(action, torch.Tensor) else torch.tensor(action, dtype=torch.float32, device=device)
+        cond = cond.to(device) if isinstance(cond, torch.Tensor) else torch.tensor(cond, dtype=torch.float32, device=device)
         h = F.relu(self.s_net(obs) + self.ac_net(action))
         h = F.relu(self.fc2(h))
         h = self.film(h, cond)
