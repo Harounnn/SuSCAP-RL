@@ -260,72 +260,44 @@ class Trainer:
         print("Training finished")
 
     def train_phase(self, phase_steps: int):
-        """Train for a single curriculum phase."""
-        phase_start = self.global_step
-        print(f"\n{'='*60}")
-        print(f"Training Phase: {self.current_phase}")
-        print(f"Steps: {phase_steps}")
-        print(f"{'='*60}\n")
+        print(f"\n{'='*60}\nTraining Phase: {self.current_phase}\nTarget Steps: {phase_steps}\n{'='*60}\n")
+        steps_collected = 0
 
-        for local_step in range(phase_steps):
-            step = local_step  # For curriculum sampling
-            
-            # sample (w,c) using curriculum
-            w, c = self.sample_curriculum(step)
+        while steps_collected < phase_steps:
+            w, c = self.sample_curriculum(steps_collected)
 
-            # collect 1 episode
-            self.collect_episode(w, c)
+            ep_steps = self.collect_episode(w, c)
+            steps_collected += ep_steps
+            self.global_step += ep_steps
 
-            # choose scalarization mode for this step
             current_mode = self.scalar_mode
             if self.chebyshev_start is not None and self.global_step >= self.chebyshev_start:
                 current_mode = "chebyshev"
 
-            # perform updates
-            # initialize dual cost fallback
             cost_for_dual = self.cost_ewma.copy()
-            for _ in range(self.updates_per_step):
+            for _ in range(ep_steps * self.updates_per_step):
                 if len(self.replay) < self.batch_size:
                     continue
                 batch = self.replay.sample(self.batch_size)
-                # prepare w_batch and c_batch arrays for batch
                 w_batch = np.stack(batch["w"])
                 c_batch = np.stack(batch["c"])
-                # convert batch values to the format expected by update()
                 lambda_vec = self.dual.lambdas.copy()
-                info = self.agent.update(batch, w_batch, c_batch, lambda_vec, relabel=True, mode=current_mode)
 
-                # update EWMA costs for dual updates using sampled batch average
+                self.agent.update(batch, w_batch, c_batch, lambda_vec, relabel=True, mode=current_mode)
+
                 batch_costs = np.stack(batch["cost"]).mean(axis=0)
                 self.cost_ewma = (1 - self.ewma_alpha) * self.cost_ewma + self.ewma_alpha * batch_costs
-                # store last batch costs for fallback if EWMA is still near-zero
                 self.last_batch_costs = batch_costs
-                # use last batch costs when ewma hasn't warmed up
                 cost_for_dual = np.where(self.cost_ewma < 1e-6, self.last_batch_costs, self.cost_ewma)
 
-            # dual update occasionally
-            if self.global_step % self.dual_update_freq == 0 and self.global_step > 0:
+            if self.global_step % self.dual_update_freq < ep_steps and self.global_step > ep_steps:
                 targets = np.array(self.cfg["constraints"]["cost_thresholds"])
-                try:
-                    self.logger.info(
-                        f"Dual update step={self.global_step} targets={targets} ewma={self.cost_ewma} last_batch={self.last_batch_costs} lambdas={self.dual.lambdas}"
-                    )
-                except Exception:
-                    pass
                 self.dual.step(cost_for_dual, targets)
-                try:
-                    self.logger.info(f"Dual updated lambdas={self.dual.lambdas}")
-                except Exception:
-                    pass
 
-            # periodic evaluation hook / checkpoint
-            if self.global_step % self.eval_freq == 0:
-                print(f"[TRAIN] global_step={self.global_step}, phase_step={local_step}, replay={len(self.replay)}, "
-                      f"scalar_mode={current_mode}, lambdas={self.dual.lambdas}")
+            if (self.global_step // self.eval_freq) > ((self.global_step - ep_steps) // self.eval_freq):
+                print(f"[TRAIN] global_step={self.global_step}, replay={len(self.replay)}, mode={current_mode}, lambdas={self.dual.lambdas}")
                 self.save_checkpoint(self.global_step, name="latest.pt")
 
-            self.global_step += 1
-        
         print(f"\n[PHASE_COMPLETE] {self.current_phase} finished at step {self.global_step}")
         self.save_checkpoint(self.global_step, name=f"{self.current_phase}_final.pt")
 
