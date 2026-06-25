@@ -193,6 +193,13 @@ class Trainer:
     def train(self):
         step = 0
         print("total training steps:", self.total_steps)
+
+        # Pre-fill replay buffer above batch_size threshold to prevent sampling deadlocks
+        while len(self.replay) < self.batch_size:
+            w, c = self.sample_curriculum(0)
+            self.collect_episode(w, c)
+        print(f"[TRAIN] Replay buffer pre-filled: {len(self.replay)} samples")
+
         while step < self.total_steps:
             # sample (w,c) using curriculum
             w, c = self.sample_curriculum(step)
