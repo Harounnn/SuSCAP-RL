@@ -116,7 +116,9 @@ class Trainer:
             with torch.no_grad():
                 a, _, _ = self.agent.actor.sample(obs_t, cond_t)
             action = a.cpu().numpy()[0]
-            next_obs, reward_vec, terminated, truncated, info = self.env.step(action)
+            # Rescale from [-1, 1] (tanh output) to [0, 1] (env expects)
+            action_env = float(np.clip((action + 1.0) / 2.0, 0.0, 1.0))
+            next_obs, reward_vec, terminated, truncated, info = self.env.step(action_env)
             cost = info["cost"]
 
             transition = {
