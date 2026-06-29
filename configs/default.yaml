@@ -33,7 +33,7 @@ constraints:
   dual_update_freq: 250
   lambda_max: 50.0
   lambda_init: [0.01, 0.01]
-  cost_thresholds: [0.01, 4.7]
+  cost_thresholds: [0.0005, 4.7]
 
 curriculum:
   phase_schedule:

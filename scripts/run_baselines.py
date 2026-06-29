@@ -264,7 +264,8 @@ def run_single_objective_sac_baseline(env, cfg, device="cpu"):
         cond_t = torch.tensor(cond[None, :], dtype=torch.float32, device=device)
         with torch.no_grad():
             mu, _ = agent.actor.forward(obs_t, cond_t)
-            a = torch.tanh(mu).cpu().numpy()[0]
+            raw = torch.tanh(mu).cpu().numpy()[0, 0]
+        a = (raw + 1.0) / 2.0  # rescale [-1,1] → [0,1] for env
         return np.clip(a, 0.0, 1.0)
 
     return_grid, cost_grid, per_episode_points, per_episode_meta = run_eval_episodes(

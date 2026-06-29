@@ -110,27 +110,12 @@ class PreferenceCurriculum:
             rng = np.random.default_rng(seed=step % (2**31))
             return self._random_simplex_sample(rng)
         else:
-            # Deterministic cycling through phase grid
+            # Deterministic cycling through phase grid (no latency bias)
             grid = self.phase_grids[active_phase]
             ptr = self.phase_ptrs[active_phase]
             sample = grid[ptr % len(grid)].copy()
             self.phase_ptrs[active_phase] += 1
-            
-            # Bias intermediate phases (edges, grid) toward latency awareness
-            # Corners should remain pure objectives (no bias)
-            if active_phase in ["edges", "grid"]:
-                # Ensure w_latency >= 0.3; if not, mix with latency direction
-                for _ in range(10):
-                    if sample[2] >= 0.3:  # sample[2] is latency weight (3rd objective)
-                        return sample.astype(np.float32)
-                    # Mix: 70% sample, 30% latency direction
-                    latency_dir = np.array([0.0, 0.0, 1.0])
-                    sample = 0.7 * sample + 0.3 * latency_dir
-                    sample = sample / sample.sum()  # Re-normalize to simplex
-                return sample.astype(np.float32)
-            else:
-                # Corners, adversarial, refinement: return as-is
-                return sample.astype(np.float32)
+            return sample.astype(np.float32)
     
     def _sample_latency_biased(self, min_latency=0.3, rng=None):
         """Sample from simplex with minimum latency weight constraint."""

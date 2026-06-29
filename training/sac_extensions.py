@@ -173,12 +173,20 @@ class SACWithConstraints:
 
         lambda_t = torch.tensor(lambda_vec, dtype=torch.float32, device=self.device)
         penalty = (q_c_stack * lambda_t).sum(dim=1)
-        # Scale penalty to match reward signal magnitude (typically -10 to -1000)
-        penalty_scaled = penalty * 10.0
 
-        actor_loss = - (q_r_mean - penalty_scaled).mean() + self.alpha * (-logp).mean()
+        # Normalize reward magnitude to match penalty scale so the preference
+        # signal is not drowned out by the constraint penalty (see "Inversion
+        # Paradox" analysis). The scale_clamp prevents degenerate ratios.
+        with torch.no_grad():
+            r_abs = q_r_mean.detach().abs().mean() + 1e-8
+            p_mean = penalty.detach().mean() + 1e-8
+            scale = (p_mean / r_abs).clamp(0.1, 100.0)
+        q_r_scaled = q_r_mean * scale
+
+        actor_loss = - (q_r_scaled - penalty).mean() + self.alpha * (-logp).mean()
         self.actor_opt.zero_grad()
         actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=10.0)
         self.actor_opt.step()
 
         # soft update
