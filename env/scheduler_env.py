@@ -19,8 +19,8 @@ class SchedulerEnv(gym.Env):
         data_path: str,
         episode_length: int = 1440,
         timestep_sec: int = 60,
-        energy_cap: float = 0.003,
-        latency_cap: float = 1.0,
+        energy_cap: float = 0.00166,
+        latency_cap: float = 0.3,
         scenario: str | None = None,
         power_model: LinearPowerModel | None = None
     ):

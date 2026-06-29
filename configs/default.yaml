@@ -29,11 +29,11 @@ model:
   critic_lr: 0.0003
 
 constraints:
-  dual_lr: 0.001
-  dual_update_freq: 250
+  dual_lr: 0.02
+  dual_update_freq: 50
   lambda_max: 50.0
   lambda_init: [0.01, 0.01]
-  cost_thresholds: [0.0005, 4.7]
+  cost_thresholds: [0.000006, 0.05]
 
 curriculum:
   phase_schedule:

@@ -131,17 +131,19 @@ class SACWithConstraints:
             q_next_mean, _ = self.critic_mean(next_obs, a_next, cond)
             y = r_scalar + self.gamma * (1.0 - dones) * q_next_mean
 
-        # update reward critics
+        # update reward critics with gradient clipping to prevent early-training
+        # Q-value explosion that would destabilise the actor update.
         critic_loss = 0.0
         for k, (qc, opt) in enumerate(zip(self.critics, self.critic_opts)):
             opt.zero_grad()
             q_val = qc(obs, actions, cond)
             loss_q = F.mse_loss(q_val, y)
             loss_q.backward()
+            torch.nn.utils.clip_grad_norm_(qc.parameters(), max_norm=20.0)
             opt.step()
             critic_loss = critic_loss + loss_q.item()
 
-        # update constraint critics
+        # update constraint critics with the same clipping guard.
         for i in range(self.n_constraints):
             # target for constraint i
             with torch.no_grad():
@@ -158,6 +160,7 @@ class SACWithConstraints:
                 q_val = qc(obs, actions, cond)
                 loss_cost = F.mse_loss(q_val, y_cost)
                 loss_cost.backward()
+                torch.nn.utils.clip_grad_norm_(qc.parameters(), max_norm=20.0)
                 opt.step()
 
         # actor update

@@ -11,6 +11,11 @@ class QNetwork(nn.Module):
         self.fc2 = nn.Linear(hidden_sizes[0], hidden_sizes[1])
         self.film = FiLM(hidden_sizes[1], cond_dim)
         self.out = nn.Linear(hidden_sizes[1], 1)
+        # Small initialization for the output layer prevents early-training Q
+        # values from spanning extreme ranges that would generate enormous
+        # gradients in the actor update.
+        nn.init.uniform_(self.out.weight, -3e-3, 3e-3)
+        nn.init.constant_(self.out.bias, 0.0)
 
     def forward(self, obs, action, cond):
         device = next(self.parameters()).device

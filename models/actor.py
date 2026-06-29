@@ -19,6 +19,15 @@ class Actor(nn.Module):
         self.mu = nn.Linear(hidden_sizes[-1], action_dim)
         self.logstd = nn.Linear(hidden_sizes[-1], action_dim)
 
+        # Initialize mu to near-zero to prevent early tanh saturation.
+        # When mu is large, tanh(mu) = ±1 and the tanh derivative is ~0,
+        # permanently starving the actor gradient ("gradient death").
+        nn.init.uniform_(self.mu.weight, -3e-3, 3e-3)
+        nn.init.constant_(self.mu.bias, 0.0)
+        # Initialize logstd for conservative initial exploration (std ≈ 0.37).
+        nn.init.uniform_(self.logstd.weight, -3e-3, 3e-3)
+        nn.init.constant_(self.logstd.bias, -1.0)
+
     def forward(self, obs, cond):
         device = next(self.parameters()).device
         obs = obs.to(device) if isinstance(obs, torch.Tensor) else torch.tensor(obs, dtype=torch.float32, device=device)
@@ -37,6 +46,12 @@ class Actor(nn.Module):
         mu, std = self.forward(obs, cond)
         dist = torch.distributions.Normal(mu, std)
         x = dist.rsample()
-        a = torch.tanh(x)  
+        a = torch.tanh(x)
+        # Tanh squashing correction (SAC appendix C):
+        # log π(a|s) = log μ(u|s) - Σ log(1 - tanh²(u_i))
+        # This ensures the log-prob correctly accounts for the tanh bijection.
+        # Without this correction, the entropy bonus pushes the policy toward
+        # tanh saturation boundaries, causing gradient death at a = ±1.
         logp = dist.log_prob(x).sum(-1)
+        logp -= torch.log(1 - torch.tanh(x)**2 + 1e-6).sum(dim=-1)
         return a, logp, mu
